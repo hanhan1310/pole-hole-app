@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "545807190708",
+    "firebase_url": "https://pole-hole-storage-default-rtdb.firebaseio.com",
+    "project_id": "pole-hole-storage",
+    "storage_bucket": "pole-hole-storage.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:545807190708:android:056db62e8cd0ad657025e1",
+        "android_client_info": {
+          "package_name": "com.example.pole_hole_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC4ivjwo99dhL2brNpNJVTsz_pN--a2u8w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
