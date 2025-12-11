@@ -53,7 +53,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     ];
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA), // Nền xám xanh nhạt hiện đại
+      backgroundColor: const Color(0xFFF5F7FA),
+      extendBody: true,
+      resizeToAvoidBottomInset: false,
       body: pages[_currentIndex],
       bottomNavigationBar: Container(
         margin: const EdgeInsets.all(20),

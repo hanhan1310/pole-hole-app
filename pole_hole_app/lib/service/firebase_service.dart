@@ -1,66 +1,77 @@
 import 'dart:developer';
-import 'dart:io';
-import 'package:firebase_storage/firebase_storage.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class FirebaseService {
-  // Khởi tạo instance
-  final FirebaseStorage _storage = FirebaseStorage.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  final String _collectionName = 'polehole';
 
   Future<void> saveReport({
-  required String imageUrl,
-  required String status, 
-  required double lat,
-  required double lng,
-}) async {
-  try {
-    Map<String, dynamic> statusMap;
-    bool needFix = false;
+    required String imageUrl,
+    required String status,
+    required double lat,
+    required double lng,
+    required String addressStart,
+    required String addressEnd,
+    required double startLat,
+    required double startLng,
+    required double endLat,
+    required double endLng,
+    required String dateReport,
+    required String note,
+    required int potholeCount,
+  }) async {
+    try {
+      Map<String, dynamic> statusMap;
+      bool needFix = false;
 
-    if (status == 'red') {
-      statusMap = {"code": 3, "current_status": "BAD"};
-      needFix = true; // Đỏ là cần sửa
-    } else if (status == 'yellow') {
-      statusMap = {"code": 2, "current_status": "WARNING"};
-      needFix = true; // Vàng cũng có thể cần theo dõi/sửa
-    } else {
-      statusMap = {"code": 1, "current_status": "GOOD"};
-      needFix = false; // Xanh thì không cần
+      if (status == 'red') {
+        statusMap = {"code": 3, "current_status": "BAD"};
+        needFix = true;
+      } else if (status == 'yellow') {
+        statusMap = {"code": 2, "current_status": "WARNING"};
+        needFix = true;
+      } else {
+        statusMap = {"code": 1, "current_status": "GOOD"};
+        needFix = false;
+      }
+
+      await _firestore.collection(_collectionName).add({
+        'created_at': FieldValue.serverTimestamp(),
+        'report_date': dateReport,
+        'image': imageUrl, // Link Cloudinary
+        'is_fixed': false,
+        'need_fix': needFix,
+        'start_coords': {'lat': startLat, 'lng': startLng},
+        'end_coords': {'lat': endLat, 'lng': endLng},
+        'location_start': addressStart,
+        'location_end': addressEnd,
+        'latitude': lat,
+        'longitude': lng,
+        'status': statusMap,
+        'note': note,
+        'pothole_count': potholeCount,
+      });
+
+      print("✅ Đã lưu báo cáo thành công vào '$_collectionName'!");
+    } catch (e) {
+      log("❌ Lỗi lưu data: $e");
+      throw e;
     }
-
-    String locationString = "$lat, $lng";
-
-    await _firestore.collection('client').add({
-      'date': FieldValue.serverTimestamp(), 
-      'image': imageUrl,                    
-      'is_fixed': false,                    
-      'need_fix': needFix,                  
-      'location_start': locationString,     
-      'location_end': locationString,       
-      'status': statusMap,                  
-    });
-
-    print("Đã lưu báo cáo thành công vào collection 'client'!");
-    
-  } catch (e) {
-    print("Lỗi lưu data: $e");
-    log("Lỗi lưu data: $e");
-    throw e; 
   }
-}
 
+  // 2. Hàm Lấy dữ liệu (Giữ nguyên)
   Stream<QuerySnapshot> getReports() {
     return _firestore
-        .collection('reports')
-        .orderBy('created_at', descending: true) // Mới nhất lên đầu
+        .collection(_collectionName)
+        .orderBy('created_at', descending: true)
         .snapshots();
   }
 
   Future<void> updateReportStatus(String docId, bool isFixed) async {
     try {
-      await _firestore.collection('reports').doc(docId).update({
+      await _firestore.collection(_collectionName).doc(docId).update({
         'is_fixed': isFixed,
         'fixed_at': isFixed ? FieldValue.serverTimestamp() : null,
       });
@@ -68,17 +79,13 @@ class FirebaseService {
       print("Lỗi update: $e");
     }
   }
-  
+
   Future<void> deleteReport(String docId, String imageUrl) async {
     try {
-      Reference photoRef = _storage.refFromURL(imageUrl);
-      await photoRef.delete();
-
-      await _firestore.collection('reports').doc(docId).delete();
-      
-      print("Đã xóa hoàn toàn!");
+      await _firestore.collection(_collectionName).doc(docId).delete();
+      print("✅ Đã xóa báo cáo khỏi Database!");
     } catch (e) {
-      print("Lỗi xóa: $e");
+      print("❌ Lỗi xóa: $e");
     }
   }
 }
