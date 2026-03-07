@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_tile_provider.dart';
@@ -12,10 +13,13 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:pole_hole_app/widget/show_toast.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../model/report_model.dart';
 import '../service/api_service.dart';
-import '../widget/funct.dart'; // Đổi lại đúng đường dẫn file service của bạn (PotholeService)
+import 'detail_report_screen.dart'; // Đổi lại đúng đường dẫn file service của bạn (PotholeService)
 // import '../widget/funct.dart'; // Nếu bạn có file này thì giữ, ko thì bỏ qua
 
 class MapTrackingScreen extends StatefulWidget {
@@ -32,9 +36,11 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
 
   // Vị trí mặc định (Hà Nội)
   LatLng _currentPosition = const LatLng(21.0285, 105.8542);
+  bool _hasFocusedOnce = false;
 
   // Quản lý luồng vị trí
   StreamSubscription<Position>? _positionStreamSubscription;
+  List<Map<String, dynamic>> _cachedPotholes = [];
 
   List<Marker> _potholeMarkers = [];
   StreamSubscription? _assessmentsSub;
@@ -61,13 +67,16 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
   DateTime? _lastCaptureTime;
   bool _isPausedBySpeed = false;
   bool _isTooFast = false;
+  final User? currentUser = FirebaseAuth.instance.currentUser;
+  StreamSubscription? _onlineUsersSub;
+  List<Marker> _onlineUserMarkers = [];
 
   final List<Map<String, dynamic>> _vehicleOptions = [
     {
       'name': 'Xe máy',
       'icon': Icons.two_wheeler,
       'color': Colors.blue,
-      'speed': '25 - 35 km/h',
+      'speed': '20 - 30 km/h',
       'desc': 'Phù hợp di chuyển trong phố.',
       'isLocked': false, // Mở
     },
@@ -75,7 +84,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
       'name': 'Ô tô',
       'icon': Icons.directions_car,
       'color': Colors.orange,
-      'speed': '30 - 45 km/h',
+      'speed': '25 - 35 km/h',
       'desc': 'Camera ổn định, ít rung lắc.',
       'isLocked': true, // <--- KHÓA
     },
@@ -99,16 +108,18 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
 
   final Map<String, double> _vehicleSpeedLimits = {
     'Xe máy': 30.0, // Đã chỉnh lại cho hợp lý hơn (xe máy đi phố tầm 30-40)
-    'Ô tô': 40.0,
+    'Ô tô': 35.0,
     'Xe đạp': 15.0,
     'Đi bộ': 10.0, // Đi bộ thì ít khi quá nhanh
   };
 
   final PotholeService _potholeService = PotholeService();
+  String? uid;
 
   @override
   void initState() {
     super.initState();
+    getUserID();
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 1),
@@ -117,19 +128,43 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
     )..repeat(reverse: true);
 
     _checkPermissionAndStartTracking();
-
+    _subscribeToOnlineUsers();
     _subscribeToPotholes();
+  }
+
+  Future<String?> getLocalUserId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('user_id');
+  }
+
+  void getUserID() async {
+    uid = await getLocalUserId();
   }
 
   @override
   void dispose() {
+    _updateOnlineStatus(false);
     _assessmentsSub?.cancel();
     _pulseController.dispose();
     _mapController.dispose();
+    _onlineUsersSub?.cancel();
     _positionStreamSubscription?.cancel();
     _scanTimer?.cancel();
     WakelockPlus.disable();
     super.dispose();
+  }
+
+  Future<void> _updateOnlineStatus(bool isOnline) async {
+    if (currentUser == null) return;
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(currentUser!.uid).update({
+        'online': isOnline,
+        'last_active': FieldValue.serverTimestamp(),
+        if (isOnline) 'current_location': {'lat': _currentPosition.latitude, 'lng': _currentPosition.longitude}
+      });
+    } catch (e) {
+      log("Err update online: $e");
+    }
   }
 
   Future<void> _checkPermissionAndStartTracking() async {
@@ -137,9 +172,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
     LocationPermission permission;
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Vui lòng bật GPS')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Vui lòng bật GPS')));
       return;
     }
     permission = await Geolocator.checkPermission();
@@ -147,15 +180,14 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
         if (mounted)
-          ScaffoldMessenger.of(context)
-              .showSnackBar(const SnackBar(content: Text('Quyền vị trí bị từ chối')));
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Quyền vị trí bị từ chối')));
         return;
       }
     }
     if (permission == LocationPermission.deniedForever) {
       if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Quyền vị trí bị từ chối vĩnh viễn. Hãy mở cài đặt.')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Quyền vị trí bị từ chối vĩnh viễn. Hãy mở cài đặt.')));
       return;
     }
 
@@ -165,17 +197,24 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
   void _startLiveLocationTracking() {
     const LocationSettings locationSettings = LocationSettings(
       accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 2,
+      distanceFilter: 5,
     );
 
-    _positionStreamSubscription = Geolocator.getPositionStream(locationSettings: locationSettings)
-        .listen((Position position) {
+    _positionStreamSubscription =
+        Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) {
+      LatLng newPos = LatLng(position.latitude, position.longitude);
       setState(() {
-        _currentPosition = LatLng(position.latitude, position.longitude);
+        _currentPosition = newPos;
       });
+      if (_isTracking && currentUser != null) {
+        FirebaseFirestore.instance.collection('users').doc(currentUser!.uid).update({
+          'current_location': {'lat': position.latitude, 'lng': position.longitude}
+        }).catchError((e) => log("Lỗi update vị trí: $e"));
+      }
 
-      if (_isTracking) {
-        _mapController.move(_currentPosition, 17.0);
+      if (_isTracking || !_hasFocusedOnce) {
+        _mapController.move(newPos, 17.0);
+        _hasFocusedOnce = true;
       }
     });
   }
@@ -205,8 +244,8 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
       await _initCamera();
       if (!_isCameraInitialized) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Không thể mở Camera. Hãy kiểm tra quyền truy cập!")));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text("Không thể mở Camera. Hãy kiểm tra quyền truy cập!")));
         }
         return;
       }
@@ -222,6 +261,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
     });
     widget.onTrackingChanged(true);
     WakelockPlus.enable();
+    _captureAndUpload(forceCapture: true);
     _scanTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
       _calculateSpeedAndDecide();
     });
@@ -265,7 +305,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
   }
 
   void _checkCaptureCondition(DateTime now) {
-    double limit = _vehicleSpeedLimits[_selectedVehicle] ?? 30.0;
+    double limit = _vehicleSpeedLimits[_selectedVehicle] ?? 20.0;
     if (_currentSpeed > limit) {
       if (!_isTooFast) {
         setState(() => _isTooFast = true);
@@ -273,7 +313,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
     } else {
       if (_isTooFast) setState(() => _isTooFast = false);
     }
-    if (_currentSpeed < 5.0 && _selectedVehicle != 'Đi bộ') {
+    if (_currentSpeed < 2.0 && _selectedVehicle != 'Đi bộ') {
       if (!_isPausedBySpeed) {
         setState(() => _isPausedBySpeed = true);
       }
@@ -285,41 +325,50 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
     }
     int intervalSeconds;
     if (_currentSpeed >= 15.0) {
-      intervalSeconds = 5;
+      intervalSeconds = 4;
     } else {
-      intervalSeconds = 7;
+      intervalSeconds = 6;
     }
-    if (_isTooFast) intervalSeconds = 8;
-    if (_lastCaptureTime == null ||
-        now.difference(_lastCaptureTime!).inSeconds >= intervalSeconds) {
-      log("📸 CHỤP ẢNH: Speed $_currentSpeed km/h - Interval ${intervalSeconds}s");
+    if (_isTooFast) intervalSeconds = 4;
+    if (_lastCaptureTime == null || now.difference(_lastCaptureTime!).inSeconds >= intervalSeconds) {
       _captureAndUpload();
       _lastCaptureTime = now;
     }
   }
 
-  Future<void> _captureAndUpload() async {
-    if (_isProcessingFrame || _cameraController == null || !_cameraController!.value.isInitialized)
+  Future<void> _captureAndUpload({bool forceCapture = false}) async {
+    if (_isProcessingFrame || _cameraController == null || !_cameraController!.value.isInitialized) return;
+    if (!forceCapture && _currentSpeed < 1.0) {
       return;
+    }
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return;
+    }
     _isProcessingFrame = true;
     try {
       final XFile image = await _cameraController!.takePicture();
       double lat = _currentPosition.latitude;
       double lng = _currentPosition.longitude;
       String timeReport = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
-      String timeLog = DateFormat('HH:mm:ss').format(DateTime.now());
-      log("📤 [$timeLog] Gửi ảnh lên server...");
+      String? existingDocId;
+      for (var pothole in _cachedPotholes) {
+        double dist = Geolocator.distanceBetween(lat, lng, pothole['lat'], pothole['lng']);
+        if (dist < 15) {
+          existingDocId = pothole['id'];
+          break;
+        }
+      }
       if (!mounted) return;
       var aiResult = await _potholeService.processImage(image, context);
       if (aiResult != null) {
         String status = aiResult['status'];
         int count = aiResult['potholeCount'];
         Uint8List imgBytes = aiResult['imageBytes'];
-        log("✅ KẾT QUẢ: $status - $count ổ gà");
         await _potholeService.saveToFirebase(
-          imgBytes, // 1. imageBytes
-          status, // 2. status
-          count, // 3. potholeCount
+          imgBytes,
+          status,
+          count,
           "Tự động quét", // 4. addressStart (Text)
           "Tự động quét", // 5. addressEnd (Text)
           lat, // 6. startLat
@@ -330,11 +379,13 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
           "Tốc độ: ${_currentSpeed.toStringAsFixed(1)} km/h ($_selectedVehicle)", // 11. note
           lat, // 12. lat (Tham số legacy)
           lng, // 13. lng (Tham số legacy)
-          context, // 14. context
+          context,
+          existingDocId: existingDocId, userId: user.uid,
+          userName: user.displayName ?? user.email ?? '',
         );
       }
     } catch (e) {
-      log("❌ Lỗi Scan: $e");
+      ShowToast('Có lỗi xảy ra', false);
     } finally {
       _isProcessingFrame = false;
     }
@@ -375,8 +426,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.fiber_manual_record,
-                        color: _isTracking ? Colors.red : Colors.grey, size: 14),
+                    Icon(Icons.fiber_manual_record, color: _isTracking ? Colors.red : Colors.grey, size: 14),
                     const SizedBox(width: 8),
                     Text(
                       _isTracking ? "AI ĐANG QUÉT..." : "CHẾ ĐỘ CHỜ",
@@ -469,8 +519,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
   }
 
   void _subscribeToPotholes() {
-    _assessmentsSub =
-        FirebaseFirestore.instance.collection('polehole').snapshots().listen((snapshot) {
+    _assessmentsSub = FirebaseFirestore.instance.collection('polehole').snapshots().listen((snapshot) {
       final List<Marker> newMarkers = [];
       final List<Polyline> newPolylines = [];
 
@@ -509,7 +558,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
               height: 40,
               child: GestureDetector(
                 onTap: () {
-                  _showPotholeInfo(data);
+                  _showPotholeInfo(doc);
                 },
                 child: Container(
                   decoration: BoxDecoration(
@@ -523,8 +572,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
             ),
           );
 
-          if (startPoint.latitude != endPoint.latitude ||
-              startPoint.longitude != endPoint.longitude) {
+          if (startPoint.latitude != endPoint.latitude || startPoint.longitude != endPoint.longitude) {
             newPolylines.add(
               Polyline(
                 points: [startPoint, endPoint],
@@ -548,98 +596,122 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
     });
   }
 
-  void _showPotholeInfo(Map<String, dynamic> data) {
+  void _subscribeToOnlineUsers() {
+    _onlineUsersSub =
+        FirebaseFirestore.instance.collection('users').where('online', isEqualTo: true).snapshots().listen((snapshot) {
+      final List<Marker> markers = [];
+      for (var doc in snapshot.docs) {
+        if (doc.id == currentUser?.uid) continue;
+        final data = doc.data();
+        final loc = data['current_location'];
+        if (loc != null) {
+          double lat = (loc['lat'] is int) ? (loc['lat'] as int).toDouble() : loc['lat'];
+          double lng = (loc['lng'] is int) ? (loc['lng'] as int).toDouble() : loc['lng'];
+          String name = data['display_name'] ?? data['email'] ?? 'User';
+          String? avatar = data['photo_url'];
+
+          markers.add(Marker(
+            point: LatLng(lat, lng),
+            width: 60,
+            height: 80,
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4)]),
+                  child: Text(
+                    name,
+                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                      color: Colors.green, // Viền xanh lá báo online
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.5)),
+                  child: CircleAvatar(
+                    radius: 16,
+                    backgroundColor: Colors.grey[200],
+                    backgroundImage: avatar != null && avatar.isNotEmpty ? NetworkImage(avatar) : null,
+                    child: (avatar == null || avatar.isEmpty)
+                        ? const Icon(Icons.person, size: 16, color: Colors.grey)
+                        : null,
+                  ),
+                ),
+              ],
+            ),
+          ));
+        }
+      }
+      setState(() => _onlineUserMarkers = markers);
+    });
+  }
+
+  void _showPotholeInfo(DocumentSnapshot doc) {
+    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+    // Tạo Model để truyền sang màn chi tiết
+    ReportModel report = ReportModel.fromFirestore(doc);
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => FractionallySizedBox(
-        heightFactor: 0.85,
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 20),
-                  decoration: BoxDecoration(
-                      color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-                ),
-              ),
-              const Text("Chi tiết báo cáo",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 15),
-              Text.rich(
-                TextSpan(
-                  style: const TextStyle(fontSize: 14, color: Colors.black),
-                  children: [
-                    const TextSpan(
-                        text: "Người khảo sát: ", style: TextStyle(fontWeight: FontWeight.bold)),
-                    const TextSpan(text: 'Người dùng'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text.rich(
-                TextSpan(
-                  style: const TextStyle(fontSize: 14, color: Colors.black),
-                  children: [
-                    const TextSpan(
-                        text: "Thời gian: ", style: TextStyle(fontWeight: FontWeight.bold)),
-                    TextSpan(text: formatDateTimeStamp(data['created_at'])),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text.rich(
-                TextSpan(
-                  style: const TextStyle(fontSize: 14, color: Colors.black),
-                  children: [
-                    const TextSpan(
-                        text: "Bắt đầu: ", style: TextStyle(fontWeight: FontWeight.bold)),
-                    TextSpan(text: data['location_start'] ?? 'N/A'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text.rich(
-                TextSpan(
-                  style: const TextStyle(fontSize: 14, color: Colors.black),
-                  children: [
-                    const TextSpan(
-                        text: "Kết thúc: ", style: TextStyle(fontWeight: FontWeight.bold)),
-                    TextSpan(text: data['location_end'] ?? 'N/A'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-              if (data['image'] != null)
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      data['image'],
-                      fit: BoxFit.contain,
-                      width: double.infinity,
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return const Center(child: CircularProgressIndicator());
-                      },
-                      errorBuilder: (context, error, stackTrace) => const Center(
-                          child: Icon(Icons.broken_image, size: 50, color: Colors.grey)),
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 10),
-            ],
-          ),
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.6,
+        padding: const EdgeInsets.all(20),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header Popup
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("Chi tiết điểm đen", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                // NÚT CẬP NHẬT Ở ĐÂY
+                IconButton(
+                  icon: const Icon(Icons.edit_note, color: Color(0xFF6C63FF), size: 30),
+                  onPressed: () {
+                    Navigator.pop(context); // Đóng popup
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => ReportDetailScreen(report: report)),
+                    );
+                  },
+                )
+              ],
+            ),
+            const Divider(),
+            const SizedBox(height: 10),
+            // Nội dung chi tiết
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.network(data['image'] ?? '',
+                  height: 150,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) =>
+                      Container(height: 150, color: Colors.grey[200], child: const Icon(Icons.broken_image))),
+            ),
+            const SizedBox(height: 10),
+            Text("${data['location_start'] ?? '...'}", maxLines: 2),
+            const SizedBox(height: 5),
+            Text("${DateFormat('dd/MM/yyyy HH:mm').format((data['created_at'] as Timestamp).toDate())}"),
+            const SizedBox(height: 5),
+            Text("Số lượng: ${data['pothole_count']}"),
+            const SizedBox(height: 5),
+            Text("Người tạo: ${data['original_reviewer'] ?? 'Ẩn danh'}"),
+          ],
         ),
       ),
     );
@@ -736,14 +808,10 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
         opacity: isLocked ? 0.5 : 1.0,
         child: Container(
           decoration: BoxDecoration(
-            color: isLocked
-                ? Colors.grey[100]
-                : (isSelected ? themeColor.withOpacity(0.05) : Colors.white),
+            color: isLocked ? Colors.grey[100] : (isSelected ? themeColor.withOpacity(0.05) : Colors.white),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: isLocked
-                  ? Colors.grey.shade300
-                  : (isSelected ? themeColor : Colors.grey.shade200),
+              color: isLocked ? Colors.grey.shade300 : (isSelected ? themeColor : Colors.grey.shade200),
               width: isSelected ? 2.5 : 1,
             ),
             boxShadow: [
@@ -770,8 +838,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                         color: isLocked ? Colors.grey[300] : themeColor.withOpacity(0.1),
                         shape: BoxShape.circle,
                       ),
-                      child:
-                          Icon(item['icon'], color: isLocked ? Colors.grey : themeColor, size: 32),
+                      child: Icon(item['icon'], color: isLocked ? Colors.grey : themeColor, size: 32),
                     ),
                     const Spacer(),
                     Text(
@@ -805,8 +872,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                           const SizedBox(width: 5),
                           Text(
                             item['speed'],
-                            style: const TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87),
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87),
                           ),
                         ],
                       ),
@@ -887,30 +953,54 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
               ),
               MarkerLayer(
                 markers: [
+                  // --- MARKER VỊ TRÍ CỦA BẠN (CẬP NHẬT MỚI) ---
                   Marker(
                     point: _currentPosition,
-                    width: 60,
+                    width: 60, // Tăng kích thước chút cho rõ avatar
                     height: 60,
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
+                        // Vòng tròn tỏa ra mờ mờ (Hiệu ứng radar)
                         Container(
                           width: 60,
                           height: 60,
                           decoration: BoxDecoration(
-                              color: Colors.blue.withOpacity(0.2), shape: BoxShape.circle),
+                            color: const Color(0xFF6C63FF).withOpacity(0.3),
+                            shape: BoxShape.circle,
+                          ),
                         ),
+                        // Viền trắng bảo vệ avatar
                         Container(
-                          width: 20,
-                          height: 20,
+                          width: 44, // Kích thước avatar + viền
+                          height: 44,
                           decoration: BoxDecoration(
-                              color: Colors.blue,
+                              color: Colors.white,
                               shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 3)),
+                              border: Border.all(color: Colors.white, width: 2),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.2),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 3),
+                                )
+                              ]),
+                          // Ảnh Avatar
+                          child: CircleAvatar(
+                            backgroundColor: Colors.grey[200],
+                            backgroundImage:
+                                currentUser?.photoURL != null ? NetworkImage(currentUser!.photoURL!) : null,
+                            child: currentUser?.photoURL == null ? const Icon(Icons.person, color: Colors.grey) : null,
+                          ),
                         ),
+                        // Mũi tên nhỏ chỉ hướng (Nếu muốn xịn hơn thì thêm, ko thì thôi)
                       ],
                     ),
                   ),
+
+                  ..._onlineUserMarkers,
+
+                  // --- CÁC MARKER Ổ GÀ (GIỮ NGUYÊN) ---
                   ..._potholeMarkers,
                 ],
               ),
@@ -1004,9 +1094,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                   color: Colors.white.withOpacity(0.95),
                   borderRadius: BorderRadius.circular(25),
                   border: Border.all(color: const Color(0xFF6C63FF), width: 2),
-                  boxShadow: [
-                    BoxShadow(color: const Color(0xFF6C63FF).withOpacity(0.3), blurRadius: 15)
-                  ],
+                  boxShadow: [BoxShadow(color: const Color(0xFF6C63FF).withOpacity(0.3), blurRadius: 15)],
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -1015,13 +1103,11 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                     const SizedBox(width: 10),
                     Text(
                       "${_currentSpeed.toStringAsFixed(1)}",
-                      style: const TextStyle(
-                          color: Colors.black87, fontSize: 32, fontWeight: FontWeight.w900),
+                      style: const TextStyle(color: Colors.black87, fontSize: 32, fontWeight: FontWeight.w900),
                     ),
                     const Padding(
                       padding: EdgeInsets.only(bottom: 6, left: 5),
-                      child: Text("km/h",
-                          style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+                      child: Text("km/h", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
@@ -1073,10 +1159,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(30),
                       boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 10,
-                            offset: const Offset(0, 5))
+                        BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))
                       ],
                     ),
                     child: TextField(
@@ -1121,14 +1204,12 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                                 shrinkWrap: true,
                                 padding: EdgeInsets.zero,
                                 itemCount: _suggestions.length,
-                                separatorBuilder: (ctx, i) =>
-                                    const Divider(height: 1, indent: 15, endIndent: 15),
+                                separatorBuilder: (ctx, i) => const Divider(height: 1, indent: 15, endIndent: 15),
                                 itemBuilder: (context, index) {
                                   final item = _suggestions[index];
                                   return ListTile(
                                     dense: true,
-                                    leading: const Icon(Icons.location_on_outlined,
-                                        color: Colors.grey, size: 20),
+                                    leading: const Icon(Icons.location_on_outlined, color: Colors.grey, size: 20),
                                     title: Text(
                                       item.displayName,
                                       maxLines: 2,
@@ -1155,16 +1236,13 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(colors: [Color(0xFF6C63FF), Color(0xFF8B85FF)]),
                     borderRadius: BorderRadius.circular(15),
-                    boxShadow: const [
-                      BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4))
-                    ],
+                    boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4))],
                   ),
                   child: Row(
                     children: [
                       Icon(_selectedVehicleIcon, color: Colors.white, size: 20),
                       const SizedBox(width: 8),
-                      Text(_selectedVehicle,
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      Text(_selectedVehicle, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
@@ -1221,25 +1299,21 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                   children: [
                     Container(
                       padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                          color: Colors.redAccent.withOpacity(0.1), shape: BoxShape.circle),
+                      decoration: BoxDecoration(color: Colors.redAccent.withOpacity(0.1), shape: BoxShape.circle),
                       child: const Icon(Icons.fiber_manual_record, color: Colors.redAccent),
                     ),
                     const SizedBox(width: 15),
                     const Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text("HỆ THỐNG ĐANG CHẠY",
-                            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-                        Text("Camera đang phân tích ngầm...",
-                            style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        Text("HỆ THỐNG ĐANG CHẠY", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                        Text("Camera đang phân tích ngầm...", style: TextStyle(color: Colors.grey, fontSize: 12)),
                       ],
                     ),
                     const Spacer(),
                     IconButton(
                       onPressed: _stopAutoScan,
-                      icon:
-                          const Icon(Icons.stop_circle_outlined, size: 40, color: Colors.redAccent),
+                      icon: const Icon(Icons.stop_circle_outlined, size: 40, color: Colors.redAccent),
                     )
                   ],
                 ),
@@ -1262,10 +1336,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                     icon: const Icon(Icons.play_arrow_rounded, size: 30, color: Colors.white),
                     label: const Text("BẮT ĐẦU QUÉT",
                         style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1,
-                            color: Colors.white)),
+                            fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1, color: Colors.white)),
                   ),
                 ),
               ),
@@ -1280,10 +1351,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         children: [
-          Container(
-              width: 20,
-              height: 20,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+          Container(width: 20, height: 20, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
           const SizedBox(width: 10),
           Text(text),
         ],

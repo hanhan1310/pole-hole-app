@@ -1,6 +1,7 @@
-import 'dart:developer';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
+import '../widget/show_toast.dart';
 
 class FirebaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -21,7 +22,14 @@ class FirebaseService {
     required String dateReport,
     required String note,
     required int potholeCount,
+    required String userId,
+    required String userName,
+    String? existingDocId,
   }) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return;
+    } else {}
     try {
       Map<String, dynamic> statusMap;
       bool needFix = false;
@@ -37,10 +45,9 @@ class FirebaseService {
         needFix = false;
       }
 
-      await _firestore.collection(_collectionName).add({
-        'created_at': FieldValue.serverTimestamp(),
+      Map<String, dynamic> data = {
         'report_date': dateReport,
-        'image': imageUrl, // Link Cloudinary
+        'image': imageUrl,
         'is_fixed': false,
         'need_fix': needFix,
         'start_coords': {'lat': startLat, 'lng': startLng},
@@ -52,21 +59,38 @@ class FirebaseService {
         'status': statusMap,
         'note': note,
         'pothole_count': potholeCount,
-      });
+        'userId': userId,
+        'updated_at': FieldValue.serverTimestamp(),
+        'original_reviewer': userName,
+      };
 
-      print("✅ Đã lưu báo cáo thành công vào '$_collectionName'!");
+      if (existingDocId != null) {
+        DocumentSnapshot oldDoc = await _firestore.collection(_collectionName).doc(existingDocId).get();
+        Map<String, dynamic>? oldData = oldDoc.data() as Map<String, dynamic>?;
+
+        Map<String, dynamic> historyItem = {
+          'updated_at': DateTime.now(),
+          'updater_id': userId,
+          'image': imageUrl,
+          'status': statusMap,
+          'pothole_count': potholeCount,
+        };
+
+        await _firestore.collection(_collectionName).doc(existingDocId).update({
+          ...data,
+          'history_updates': FieldValue.arrayUnion([historyItem]),
+        });
+      } else {
+        data['created_at'] = FieldValue.serverTimestamp();
+        await _firestore.collection(_collectionName).add(data);
+      }
     } catch (e) {
-      log("❌ Lỗi lưu data: $e");
       throw e;
     }
   }
 
-  // 2. Hàm Lấy dữ liệu (Giữ nguyên)
   Stream<QuerySnapshot> getReports() {
-    return _firestore
-        .collection(_collectionName)
-        .orderBy('created_at', descending: true)
-        .snapshots();
+    return _firestore.collection(_collectionName).orderBy('created_at', descending: true).snapshots();
   }
 
   Future<void> updateReportStatus(String docId, bool isFixed) async {
@@ -75,17 +99,20 @@ class FirebaseService {
         'is_fixed': isFixed,
         'fixed_at': isFixed ? FieldValue.serverTimestamp() : null,
       });
+      ShowToast("Cập nhật trạng thái thành công", true);
     } catch (e) {
-      print("Lỗi update: $e");
+      ShowToast("Lỗi: Không thể cập nhật", false);
+      throw e;
     }
   }
 
   Future<void> deleteReport(String docId, String imageUrl) async {
     try {
       await _firestore.collection(_collectionName).doc(docId).delete();
-      print("✅ Đã xóa báo cáo khỏi Database!");
+      ShowToast("Xóa thành công", true);
     } catch (e) {
-      print("❌ Lỗi xóa: $e");
+      ShowToast("Lỗi: Không thể xóa", false);
+      throw e;
     }
   }
 }

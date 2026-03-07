@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_tile_provider.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -37,27 +39,28 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
 
   String? _selectedStatus = 'green';
   final List<Map<String, dynamic>> _statusOptions = [
-    {
-      'value': 'green',
-      'label': 'Tốt - Đường ổn định',
-      'color': Colors.green,
-      'icon': Icons.check_circle
-    },
-    {
-      'value': 'yellow',
-      'label': 'Cảnh báo - Có ít ổ gà',
-      'color': Colors.orange,
-      'icon': Icons.warning_amber
-    },
-    {
-      'value': 'red',
-      'label': 'Nguy hiểm - Nhiều ổ gà',
-      'color': Colors.red,
-      'icon': Icons.report_problem
-    },
+    {'value': 'green', 'label': 'Tốt - Đường ổn định', 'color': Colors.green, 'icon': Icons.check_circle},
+    {'value': 'yellow', 'label': 'Cảnh báo - Có ít ổ gà', 'color': Colors.orange, 'icon': Icons.warning_amber},
+    {'value': 'red', 'label': 'Nguy hiểm - Nhiều ổ gà', 'color': Colors.red, 'icon': Icons.report_problem},
   ];
 
   LatLng _currentPosition = const LatLng(21.0285, 105.8542);
+
+  @override
+  void initState() {
+    super.initState();
+    final user = FirebaseAuth.instance.currentUser;
+    print("🔍 DEBUG AUTH: User hiện tại là: ${user?.uid ?? 'NULL'}");
+
+    // Lắng nghe sự thay đổi (để xem có bị logout bất ngờ không)
+    FirebaseAuth.instance.authStateChanges().listen((User? user) {
+      if (user == null) {
+        print('⚠️ DEBUG AUTH: User đã bị đăng xuất!');
+      } else {
+        print('✅ DEBUG AUTH: User đang đăng nhập: ${user.uid}');
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -78,8 +81,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
       }
 
       // Lấy tọa độ GPS
-      Position position =
-          await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
       LatLng currentPos = LatLng(position.latitude, position.longitude);
 
       // Lấy địa chỉ từ API
@@ -108,7 +110,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
   Future<void> _openMapPicker(bool isStart) async {
     LatLng initialPos = isStart
         ? (_startPosCoords ?? const LatLng(21.0285, 105.8542))
-        : (_endPosCoords ?? const LatLng(21.0285, 105.8542));
+        : ((_endPosCoords ?? _startPosCoords) ?? const LatLng(21.0285, 105.8542));
 
     final LocationResult? result = await showGeneralDialog<LocationResult>(
       context: context,
@@ -178,8 +180,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                     labelText: label,
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
-                    suffixIcon:
-                        isEditable ? const Icon(Icons.edit, size: 16, color: Colors.grey) : null,
+                    suffixIcon: isEditable ? const Icon(Icons.edit, size: 16, color: Colors.grey) : null,
                   ),
                 ),
               ),
@@ -203,8 +204,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                   const SizedBox(width: 5),
                   Text(
                     "GPS: ${coords.latitude.toStringAsFixed(6)}, ${coords.longitude.toStringAsFixed(6)}",
-                    style: TextStyle(
-                        color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.w500),
+                    style: TextStyle(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.w500),
                   ),
                 ],
               ),
@@ -277,9 +277,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))
-        ],
+        boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))],
       ),
       child: TextFormField(
         onTapOutside: (ct) {
@@ -293,11 +291,9 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
           hintText: hint,
           prefixIcon: Icon(icon, color: const Color(0xFF6C63FF)),
           border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(20),
-              borderSide: BorderSide(color: Colors.grey.shade300)),
+              borderRadius: BorderRadius.circular(20), borderSide: BorderSide(color: Colors.grey.shade300)),
           enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(20),
-              borderSide: BorderSide(color: Colors.grey.shade200)),
+              borderRadius: BorderRadius.circular(20), borderSide: BorderSide(color: Colors.grey.shade200)),
           focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(20),
               borderSide: const BorderSide(color: Color(0xFF6C63FF), width: 2)),
@@ -311,6 +307,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
     return Scaffold(
       appBar: AppBar(
           title: Text(
@@ -333,15 +330,10 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                 decoration: BoxDecoration(
                     color: const Color(0xFFF8F9FE),
                     borderRadius: BorderRadius.circular(25),
-                    border: Border.all(
-                        color: const Color(0xFF6C63FF).withOpacity(0.3),
-                        width: 2,
-                        style: BorderStyle.solid),
+                    border:
+                        Border.all(color: const Color(0xFF6C63FF).withOpacity(0.3), width: 2, style: BorderStyle.solid),
                     boxShadow: [
-                      BoxShadow(
-                          color: Colors.grey.withOpacity(0.1),
-                          blurRadius: 10,
-                          offset: const Offset(0, 5))
+                      BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))
                     ]),
                 child: Stack(
                   alignment: Alignment.topCenter,
@@ -354,11 +346,8 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                           decoration: BoxDecoration(
                               color: Colors.white,
                               shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(color: Colors.grey.withOpacity(0.2), blurRadius: 10)
-                              ]),
-                          child: const Icon(Icons.cloud_upload_rounded,
-                              size: 40, color: Color(0xFF6C63FF)),
+                              boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.2), blurRadius: 10)]),
+                          child: const Icon(Icons.cloud_upload_rounded, size: 40, color: Color(0xFF6C63FF)),
                         ),
                         const SizedBox(height: 5),
                         const Text("Chạm để tải ảnh lên",
@@ -371,14 +360,13 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                         children: [
                           _buildSmallButton("Camera", Icons.camera_alt, Colors.blue, () async {
                             final picker = ImagePicker();
-                            final XFile? img = await picker.pickImage(
-                                source: ImageSource.camera, imageQuality: 50, maxWidth: 1024);
+                            final XFile? img =
+                                await picker.pickImage(source: ImageSource.camera, imageQuality: 50, maxWidth: 1024);
 
                             if (img != null && context.mounted) {
                               _fillCurrentLocation();
                               try {
-                                dynamic response =
-                                    await PotholeService().processImage(img, context);
+                                dynamic response = await PotholeService().processImage(img, context);
                                 if (response != null) {
                                   setState(() {
                                     data = response;
@@ -409,8 +397,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                             }
                           }),
                           const SizedBox(width: 15),
-                          _buildSmallButton("Thư viện", Icons.photo_library, Colors.purple,
-                              () async {
+                          _buildSmallButton("Thư viện", Icons.photo_library, Colors.purple, () async {
                             final picker = ImagePicker();
                             final XFile? img = await picker.pickImage(
                               source: ImageSource.gallery,
@@ -419,8 +406,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                             );
                             if (img != null && context.mounted) {
                               try {
-                                dynamic response =
-                                    await PotholeService().processImage(img, context);
+                                dynamic response = await PotholeService().processImage(img, context);
                                 if (response == null) return;
                                 log(response.toString());
                                 setState(() {
@@ -464,10 +450,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                   borderRadius: BorderRadius.circular(25),
                   color: Colors.grey[200],
                   boxShadow: [
-                    BoxShadow(
-                        color: Colors.grey.withOpacity(0.1),
-                        blurRadius: 10,
-                        offset: const Offset(0, 5))
+                    BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))
                   ],
                 ),
                 child: ClipRRect(
@@ -513,8 +496,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                 ),
               ),
             const SizedBox(height: 30),
-            const Text("Xác nhận thông tin địa điểm",
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+            const Text("Xác nhận thông tin địa điểm", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
             const SizedBox(height: 20),
             _buildFancyTextField(
               "Ngày báo cáo",
@@ -544,12 +526,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.grey.withOpacity(0.1),
-                      blurRadius: 10,
-                      offset: const Offset(0, 5))
-                ],
+                boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))],
                 border: Border.all(color: Colors.grey.shade300), // Viền nhẹ
               ),
               child: DropdownButtonFormField<String>(
@@ -566,7 +543,6 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                     value: item['value'],
                     child: Row(
                       children: [
-                        // Dấu chấm tròn màu hoặc Icon thể hiện trạng thái
                         Container(
                           padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
@@ -604,22 +580,32 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
               height: 60,
               child: ElevatedButton(
                 onPressed: () async {
+                  // 1. CHECK USER TRƯỚC KHI LƯU
+                  final user = FirebaseAuth.instance.currentUser;
+                  if (user == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Lỗi: Bạn chưa đăng nhập!"), backgroundColor: Colors.red));
+                    return;
+                  }
+
                   if (data['imageBytes'] == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text("Vui lòng tải ảnh lên!"), backgroundColor: Colors.red));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Vui lòng tải ảnh lên!"), backgroundColor: Colors.red));
                     return;
                   }
                   if (_startPosCoords == null || _endPosCoords == null) {
                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text("Vui lòng chọn vị trí trên bản đồ!"),
-                        backgroundColor: Colors.red));
+                        content: Text("Vui lòng chọn vị trí trên bản đồ!"), backgroundColor: Colors.red));
                     return;
                   }
+
                   String finalStatus = _selectedStatus ?? data['status'] ?? 'green';
                   int count = data['potholeCount'] ?? 0;
                   String finalDate = _dateController.text.isEmpty
                       ? DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())
                       : _dateController.text;
+
+                  // 2. TRUYỀN USER UID TRỰC TIẾP
                   await PotholeService().saveToFirebase(
                     data['imageBytes'],
                     finalStatus,
@@ -635,6 +621,8 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                     _startPosCoords!.latitude,
                     _startPosCoords!.longitude,
                     context,
+                    userId: user.uid,
+                    userName: user.displayName ?? user.email ?? '',
                   );
 
                   if (context.mounted) _resetForm();
@@ -644,8 +632,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                 ),
                 child: const Text("GỬI BÁO CÁO",
-                    style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
               ),
             ),
             const SizedBox(height: 50),
@@ -749,8 +736,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                               });
                               dialogMapController.move(point, dialogMapController.camera.zoom);
 
-                              String newAddress =
-                                  await _getAddressFromLatLng(point.latitude, point.longitude);
+                              String newAddress = await _getAddressFromLatLng(point.latitude, point.longitude);
                               if (context.mounted) {
                                 setStateSheet(() {
                                   selectedAddress = newAddress;
@@ -795,8 +781,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                         ),
                         child: const Text("Xác nhận vị trí này",
-                            style: TextStyle(
-                                color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
                     )
                   ],
@@ -911,7 +896,12 @@ class _MapPickerDialogState extends State<MapPickerDialog> {
               },
             ),
             children: [
-              TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.polehole_app',
+                subdomains: const ['a', 'b', 'c'],
+                tileProvider: CancellableNetworkTileProvider(),
+              ),
               MarkerLayer(markers: [
                 Marker(
                   point: _selectedPos,
@@ -956,8 +946,7 @@ class _MapPickerDialogState extends State<MapPickerDialog> {
                 if (_suggestions.isNotEmpty)
                   Container(
                     margin: const EdgeInsets.only(top: 5),
-                    decoration:
-                        BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
                     child: ListView.builder(
                       shrinkWrap: true,
                       padding: EdgeInsets.zero,
@@ -1039,16 +1028,13 @@ class _MapPickerDialogState extends State<MapPickerDialog> {
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF6C63FF),
                               foregroundColor: Colors.white,
-                              shape:
-                                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                               elevation: 0,
                             ),
                             onPressed: () {
-                              Navigator.pop(
-                                  context, LocationResult(_selectedPos, _selectedAddress));
+                              Navigator.pop(context, LocationResult(_selectedPos, _selectedAddress));
                             },
-                            child: const Text("XÁC NHẬN",
-                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            child: const Text("XÁC NHẬN", style: TextStyle(fontWeight: FontWeight.bold)),
                           ),
                         ),
                       ),

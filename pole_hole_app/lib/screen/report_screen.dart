@@ -2,6 +2,7 @@ import 'dart:developer';
 import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../model/report_model.dart';
@@ -19,6 +20,56 @@ class _ReportScreenState extends State<ReportScreen> {
   String _statsFilter = 'Ngày';
   final FirebaseService _firebaseService = FirebaseService();
   DateTimeRange? _customDateRange;
+  final User? _currentUser = FirebaseAuth.instance.currentUser;
+  bool _isAdmin = false;
+  List<Map<String, dynamic>> _surveyors = [];
+  String? _selectedSurveyorId;
+  late Stream<QuerySnapshot> _reportsStream;
+
+  int? _selectedStatusFilter;
+
+  @override
+  void initState() {
+    super.initState();
+    _reportsStream = _firebaseService.getReports();
+    _checkRole();
+  }
+
+  Future<void> _checkRole() async {
+    if (_currentUser == null) return;
+    try {
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(_currentUser!.uid).get();
+      if (userDoc.exists) {
+        String role = userDoc.get('role') ?? 'surveyor';
+        setState(() {
+          _isAdmin = (role == 'admin');
+        });
+
+        if (_isAdmin) {
+          _fetchSurveyors();
+        }
+      }
+    } catch (e) {
+      log("Error check role: $e");
+    }
+  }
+
+  Future<void> _fetchSurveyors() async {
+    try {
+      var snapshot = await FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'surveyor').get();
+
+      setState(() {
+        _surveyors = snapshot.docs.map((doc) {
+          return {
+            'id': doc.id,
+            'name': doc['display_name'] ?? doc['email'] ?? 'Nhân viên',
+          };
+        }).toList();
+      });
+    } catch (e) {
+      log("Lỗi lấy danh sách nhân viên: $e");
+    }
+  }
 
   String _formatDate(DateTime date) {
     return "${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute}";
@@ -29,12 +80,12 @@ class _ReportScreenState extends State<ReportScreen> {
       context: context,
       firstDate: DateTime(2000),
       lastDate: DateTime(2100),
-      initialDateRange: _customDateRange, // Mặc định chọn range cũ nếu có
+      initialDateRange: _customDateRange,
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: const ColorScheme.light(
-              primary: Color(0xFF6C63FF), // Màu chủ đạo
+              primary: Color(0xFF6C63FF),
               onPrimary: Colors.white,
             ),
           ),
@@ -46,7 +97,7 @@ class _ReportScreenState extends State<ReportScreen> {
     if (picked != null) {
       setState(() {
         _customDateRange = picked;
-        _statsFilter = 'Tùy chọn'; // Chuyển filter sang chế độ tùy chọn
+        _statsFilter = 'Tùy chọn';
       });
     }
   }
@@ -61,8 +112,6 @@ class _ReportScreenState extends State<ReportScreen> {
     } else if (_statsFilter == 'Tháng') {
       return date.year == now.year && date.month == now.month;
     } else if (_statsFilter == 'Tùy chọn' && _customDateRange != null) {
-      // Logic lọc theo khoảng tùy chọn
-      // isAfter start (trừ 1s để lấy cả mốc bắt đầu) VÀ isBefore end (cộng 1 ngày để lấy hết ngày kết thúc)
       return date.isAfter(_customDateRange!.start.subtract(const Duration(seconds: 1))) &&
           date.isBefore(_customDateRange!.end.add(const Duration(days: 1)));
     }
@@ -73,7 +122,6 @@ class _ReportScreenState extends State<ReportScreen> {
     Color statusColor;
     String statusText;
 
-    // Dùng report.statusCode gợi ý code sướng tay
     if (report.statusCode == 3) {
       statusColor = const Color(0xFFD9534F);
       statusText = "Nguy hiểm";
@@ -90,7 +138,7 @@ class _ReportScreenState extends State<ReportScreen> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => ReportDetailScreen(report: report), // Truyền model sang
+            builder: (context) => ReportDetailScreen(report: report),
           ),
         );
       },
@@ -112,7 +160,6 @@ class _ReportScreenState extends State<ReportScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Ảnh thumbnail
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
               child: SizedBox(
@@ -120,19 +167,16 @@ class _ReportScreenState extends State<ReportScreen> {
                 height: 70,
                 child: report.imageUrl.isNotEmpty
                     ? Image.network(report.imageUrl, fit: BoxFit.cover)
-                    : Container(
-                        color: Colors.grey[200], child: const Icon(Icons.image_not_supported)),
+                    : Container(color: Colors.grey[200], child: const Icon(Icons.image_not_supported)),
               ),
             ),
             const SizedBox(width: 12),
-
-            // Thông tin
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    report.addressStart, // Dùng model
+                    report.addressStart,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
@@ -143,7 +187,7 @@ class _ReportScreenState extends State<ReportScreen> {
                       const Icon(Icons.access_time, size: 14, color: Colors.grey),
                       const SizedBox(width: 4),
                       Text(
-                        _formatDate(report.createdAt), // Dùng model
+                        _formatDate(report.createdAt),
                         style: const TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                     ],
@@ -159,13 +203,12 @@ class _ReportScreenState extends State<ReportScreen> {
                         ),
                         child: Text(
                           statusText,
-                          style: TextStyle(
-                              color: statusColor, fontSize: 11, fontWeight: FontWeight.bold),
+                          style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.bold),
                         ),
                       ),
                       const Spacer(),
                       Text(
-                        "${report.potholeCount} ổ gà", // Dùng model
+                        "${report.potholeCount} ổ gà",
                         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                       ),
                     ],
@@ -181,6 +224,8 @@ class _ReportScreenState extends State<ReportScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final currentUid = _currentUser?.uid;
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -192,7 +237,7 @@ class _ReportScreenState extends State<ReportScreen> {
           backgroundColor: const Color(0xFF6C63FF),
           foregroundColor: Colors.black),
       body: StreamBuilder<QuerySnapshot>(
-        stream: _firebaseService.getReports(),
+        stream: _reportsStream,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -203,19 +248,23 @@ class _ReportScreenState extends State<ReportScreen> {
           int greenCount = 0;
 
           List<ReportModel> reports = [];
+          List<ReportModel> filteredReportsForList = [];
 
           if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
-            final allReports =
-                snapshot.data!.docs.map((doc) => ReportModel.fromFirestore(doc)).toList();
+            final allReports = snapshot.data!.docs.map((doc) => ReportModel.fromFirestore(doc)).toList();
 
             reports = allReports.where((report) {
+              if (_isAdmin) {
+                if (_selectedSurveyorId != null) {
+                  if (report.userId != _selectedSurveyorId) return false;
+                }
+              } else {
+                if (report.userId != currentUid) return false;
+              }
+
               return _isWithinFilter(report.createdAt);
             }).toList();
 
-            log("Tổng số bản ghi sau lọc: ${reports.length}");
-            for (var item in reports) {
-              log(item.toString());
-            }
             for (var report in reports) {
               if (report.statusCode == 3) {
                 redCount++;
@@ -225,6 +274,13 @@ class _ReportScreenState extends State<ReportScreen> {
                 greenCount++;
               }
             }
+
+            filteredReportsForList = reports.where((report) {
+              if (_selectedStatusFilter != null) {
+                return report.statusCode == _selectedStatusFilter;
+              }
+              return true;
+            }).toList();
           }
 
           int total = reports.length;
@@ -259,12 +315,10 @@ class _ReportScreenState extends State<ReportScreen> {
                           checkmarkColor: Colors.white,
                           selectedColor: const Color(0xFF6C63FF),
                           backgroundColor: Colors.grey[100],
-                          labelStyle: TextStyle(
-                              color: isSel ? Colors.white : Colors.black,
-                              fontWeight: FontWeight.bold),
+                          labelStyle:
+                              TextStyle(color: isSel ? Colors.white : Colors.black, fontWeight: FontWeight.bold),
                           onSelected: (val) {
                             if (e == 'Tùy chọn') {
-                              // Nếu bấm Tùy chọn thì mở lịch
                               _pickDateRange();
                             } else {
                               setState(() => _statsFilter = e);
@@ -275,8 +329,6 @@ class _ReportScreenState extends State<ReportScreen> {
                     }).toList(),
                   ),
                 ),
-
-                // Pie Chart
                 Stack(
                   alignment: Alignment.center,
                   children: [
@@ -296,66 +348,118 @@ class _ReportScreenState extends State<ReportScreen> {
                       children: [
                         const Icon(Icons.analytics, color: Colors.grey),
                         Text("TỔNG", style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-                        Text("$total",
-                            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                        Text("$total", style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
                       ],
                     )
                   ],
                 ),
-
                 const SizedBox(height: 30),
-
-                // Legend Cards
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Padding(
-                        padding: EdgeInsets.only(bottom: 15),
-                        child: Text(
-                          'Tỉ lệ ổ gà phát hiện được',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-                        ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Tỉ lệ ổ gà phát hiện được',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                          ),
+                          if (_selectedStatusFilter != null)
+                            TextButton(
+                              onPressed: () {
+                                setState(() {
+                                  _selectedStatusFilter = null;
+                                });
+                              },
+                              child: const Text("Hiển thị tất cả", style: TextStyle(color: Color(0xFF6C63FF))),
+                            ),
+                        ],
                       ),
+                      const SizedBox(height: 10),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          _buildStatCard("Nhiều", "${(redPercent * 100).toStringAsFixed(0)}%",
-                              const Color(0xFFD9534F)),
-                          _buildStatCard("Ít", "${(yellowPercent * 100).toStringAsFixed(0)}%",
-                              const Color(0xFFF0AD4E)),
-                          _buildStatCard("Không", "${(greenPercent * 100).toStringAsFixed(0)}%",
-                              const Color(0xFF5CB85C)),
+                          _buildStatCard(
+                              "Nguy hiểm", "${(redPercent * 100).toStringAsFixed(0)}%", const Color(0xFFD9534F), 3),
+                          _buildStatCard(
+                              "Cảnh báo", "${(yellowPercent * 100).toStringAsFixed(0)}%", const Color(0xFFF0AD4E), 2),
+                          _buildStatCard(
+                              "An toàn", "${(greenPercent * 100).toStringAsFixed(0)}%", const Color(0xFF5CB85C), 1),
                         ],
                       ),
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 30),
-
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: const Text(
-                    "Lịch sử phát hiện",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        "Lịch sử phát hiện",
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                      ),
+                      if (_isAdmin)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                          decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.grey.shade300)),
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              value: _selectedSurveyorId,
+                              hint: const Text("Tất cả nhân viên", style: TextStyle(fontSize: 12)),
+                              icon: const Icon(Icons.filter_list, size: 18, color: Color(0xFF6C63FF)),
+                              style: const TextStyle(fontSize: 13, color: Colors.black, fontWeight: FontWeight.w500),
+                              onChanged: (String? newValue) {
+                                setState(() {
+                                  _selectedSurveyorId = newValue;
+                                });
+                              },
+                              items: [
+                                const DropdownMenuItem<String>(
+                                  value: null,
+                                  child: Text("Tất cả nhân viên"),
+                                ),
+                                ..._surveyors.map<DropdownMenuItem<String>>((Map<String, dynamic> surveyor) {
+                                  return DropdownMenuItem<String>(
+                                    value: surveyor['id'],
+                                    child: ConstrainedBox(
+                                      constraints: const BoxConstraints(maxWidth: 120),
+                                      child: Text(
+                                        surveyor['name'],
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-
                 const SizedBox(height: 10),
-
-                ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: reports.length,
-                  itemBuilder: (context, index) {
-                    final reportItem = reports[index];
-                    return _buildHistoryItem(reportItem);
-                  },
-                ),
-
+                filteredReportsForList.isEmpty
+                    ? const Padding(
+                        padding: EdgeInsets.all(40.0),
+                        child: Text("Không có báo cáo nào cho trạng thái này.", style: TextStyle(color: Colors.grey)),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: filteredReportsForList.length,
+                        itemBuilder: (context, index) {
+                          final reportItem = filteredReportsForList[index];
+                          return _buildHistoryItem(reportItem);
+                        },
+                      ),
                 const SizedBox(height: 50),
               ],
             ),
@@ -365,27 +469,46 @@ class _ReportScreenState extends State<ReportScreen> {
     );
   }
 
-  Widget _buildStatCard(String label, String value, Color color) {
-    return Container(
-      width: 90,
-      height: 90,
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.5), width: 2),
-        boxShadow: [
-          BoxShadow(color: color.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))
-        ],
-      ),
-      child: Column(
-        children: [
-          Text(value, style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: color)),
-          const SizedBox(height: 5),
-          Text(label,
-              style:
-                  const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
-        ],
+  Widget _buildStatCard(String label, String value, Color color, int statusCode) {
+    bool isSelected = _selectedStatusFilter == statusCode;
+
+    return InkWell(
+      onTap: () {
+        setState(() {
+          if (_selectedStatusFilter == statusCode) {
+            _selectedStatusFilter = null;
+          } else {
+            _selectedStatusFilter = statusCode;
+          }
+        });
+      },
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        width: 90,
+        height: 90,
+        padding: const EdgeInsets.all(15),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withOpacity(0.1) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? color : color.withOpacity(0.5),
+            width: 2,
+          ),
+          boxShadow: [
+            BoxShadow(
+                color: isSelected ? color.withOpacity(0.3) : color.withOpacity(0.1),
+                blurRadius: isSelected ? 15 : 10,
+                offset: const Offset(0, 5))
+          ],
+        ),
+        child: Column(
+          children: [
+            Text(value, style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: color)),
+            const SizedBox(height: 10),
+            Text(label, style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 11)),
+          ],
+        ),
       ),
     );
   }

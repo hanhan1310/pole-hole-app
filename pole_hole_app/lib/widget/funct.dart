@@ -5,11 +5,11 @@ String formatDateTimeStamp(Timestamp? timestamp) {
 
   final DateTime date = timestamp.toDate();
 
-  String minute = date.minute.toString().padLeft(2, '0'); // mm (phút)
-  String hour = date.hour.toString().padLeft(2, '0'); // hh (giờ)
-  String day = date.day.toString().padLeft(2, '0'); // dd (ngày)
-  String month = date.month.toString().padLeft(2, '0'); // mm (tháng)
-  String year = date.year.toString(); // yyyy (năm)
+  String minute = date.minute.toString().padLeft(2, '0');
+  String hour = date.hour.toString().padLeft(2, '0');
+  String day = date.day.toString().padLeft(2, '0');
+  String month = date.month.toString().padLeft(2, '0');
+  String year = date.year.toString();
 
   return "$minute/$hour - $day/$month/$year";
 }

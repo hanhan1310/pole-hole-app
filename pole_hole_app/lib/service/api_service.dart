@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../widget/show_toast.dart';
 import 'firebase_service.dart';
 
 class PotholeService {
@@ -27,7 +28,6 @@ class PotholeService {
   ///ngrok api
   final String _apiUrl = "https://dominque-uninserted-dogmatically.ngrok-free.dev/predict";
   PotholeService() {
-    // Cấu hình Dio với timeout
     _dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 30),
       receiveTimeout: const Duration(seconds: 60),
@@ -43,7 +43,6 @@ class PotholeService {
 
   Future<String?> uploadImageToCloudinary(File imageFile) async {
     try {
-      // URL upload của Cloudinary
       String url = "https://api.cloudinary.com/v1_1/$_cloudName/image/upload";
 
       FormData formData = FormData.fromMap({
@@ -58,14 +57,13 @@ class PotholeService {
         return uploadedUrl;
       }
     } catch (e) {
-      print("❌ Lỗi upload Cloudinary: $e");
+      ShowToast("Lỗi: Upload ảnh lên Cloudinary thất bại", false);
     }
     return null;
   }
 
   Future<dynamic> processImage(XFile imageFile, BuildContext context) async {
     try {
-      // Đọc file ảnh
       final file = File(imageFile.path);
       final fileSize = await file.length();
       final sizeMB = fileSize / 1024 / 1024;
@@ -82,20 +80,6 @@ class PotholeService {
       var response = await _dio.post(
         _apiUrl,
         data: formData,
-        onSendProgress: (sent, total) {
-          if (total != -1) {
-            final progress = (sent / total * 100).toStringAsFixed(1);
-          }
-        },
-        onReceiveProgress: (received, total) {
-          final elapsed = stopwatch.elapsedMilliseconds / 1000;
-          if (total != -1) {
-            final progress = (received / total * 100).toStringAsFixed(1);
-            print("   📥 Download: $progress% - ${elapsed.toStringAsFixed(1)}s");
-          } else {
-            print("   📥 Received: $received bytes - ${elapsed.toStringAsFixed(1)}s");
-          }
-        },
       );
 
       stopwatch.stop();
@@ -104,9 +88,9 @@ class PotholeService {
         var data = response.data;
 
         log(response.toString());
-        String status = data['status']; // "red", "yellow", "green"
-        int potholeCount = data['pothole_count'] ?? 0; // Số lượng ổ gà
-        String base64Image = data['image_base64']; // Ảnh đã vẽ (base64)
+        String status = data['status'];
+        int potholeCount = data['pothole_count'] ?? 0;
+        String base64Image = data['image_base64'];
         Uint8List imageBytes = base64Decode(base64Image);
 
         Map<String, dynamic> dataReturn = {
@@ -134,7 +118,7 @@ class PotholeService {
   }
 
   Future<void> saveToFirebase(
-    Uint8List imageBytes, // Ảnh kết quả từ AI (dạng bytes)
+    Uint8List imageBytes,
     String status,
     int potholeCount,
     String addressStart,
@@ -147,8 +131,11 @@ class PotholeService {
     String note,
     double lat,
     double lng,
-    BuildContext context,
-  ) async {
+    BuildContext context, {
+    required String userId,
+    String? existingDocId,
+    required String userName,
+  }) async {
     try {
       showDialog(
         context: context,
@@ -172,65 +159,32 @@ class PotholeService {
       }
 
       await _firebaseService.saveReport(
-        imageUrl: imageUrl, // Link từ Cloudinary
-        status: status,
-        lat: lat,
-        lng: lng,
-        addressStart: addressStart,
-        startLat: startLat,
-        startLng: startLng,
-        endLat: endLat,
-        endLng: endLng,
-        addressEnd: addressEnd,
-        dateReport: dateReport,
-        note: note,
-        potholeCount: potholeCount,
-      );
+          imageUrl: imageUrl,
+          status: status,
+          lat: lat,
+          lng: lng,
+          addressStart: addressStart,
+          startLat: startLat,
+          startLng: startLng,
+          endLat: endLat,
+          endLng: endLng,
+          addressEnd: addressEnd,
+          dateReport: dateReport,
+          note: note,
+          potholeCount: potholeCount,
+          userId: userId,
+          existingDocId: existingDocId,
+          userName: userName);
 
-      // BƯỚC 4: Thông báo thành công
       if (context.mounted) {
-        Navigator.pop(context); // Tắt loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Đã gửi báo cáo thành công!'),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        Navigator.pop(context);
+        ShowToast("Gửi báo cáo thành công", true);
       }
     } catch (e) {
       if (context.mounted) {
-        Navigator.pop(context); // Tắt loading nếu lỗi
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ Lỗi: $e'), backgroundColor: Colors.red),
-        );
+        Navigator.pop(context);
+        ShowToast("Lỗi: Không thể xóa", false);
       }
     }
-  }
-}
-
-String getStatusText(String status) {
-  switch (status) {
-    case 'red':
-      return '⚠️ NGHIÊM TRỌNG - Cần sửa chữa ngay';
-    case 'yellow':
-      return '⚡ CẢNH BÁO - Cần theo dõi';
-    case 'green':
-      return '✅ TỐT - Đường ổn định';
-    default:
-      return 'Không xác định';
-  }
-}
-
-Color getStatusColor(String status) {
-  switch (status) {
-    case 'red':
-      return Colors.red;
-    case 'yellow':
-      return Colors.orange;
-    case 'green':
-      return Colors.green;
-    default:
-      return Colors.grey;
   }
 }

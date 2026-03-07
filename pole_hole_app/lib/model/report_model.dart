@@ -15,6 +15,7 @@ class ReportModel {
   final String originalReviewer; // Người tạo báo cáo ban đầu
   final String? updater; // Người cập nhật sau cùng
   final DateTime? updatedAt; // Thời gian cập nhật sau cùng
+  final String userId; // <--- 1. THÊM TRƯỜNG NÀY
 
   ReportModel({
     required this.id,
@@ -30,6 +31,7 @@ class ReportModel {
     required this.originalReviewer,
     this.updater,
     this.updatedAt,
+    required this.userId, // <--- 2. THÊM VÀO CONSTRUCTOR
   });
 
   factory ReportModel.fromFirestore(DocumentSnapshot doc) {
@@ -61,6 +63,7 @@ class ReportModel {
       originalReviewer: data['original_reviewer'] ?? 'Người đánh giá',
       updater: data['updater'],
       updatedAt: updateDate,
+      userId: data['userId'] ?? '', // <--- 3. LẤY DỮ LIỆU TỪ FIRESTORE
     );
   }
 }
