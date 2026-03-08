@@ -104,15 +104,7 @@ class PotholeService {
         throw Exception("AI Server trả về lỗi: ${response.data}");
       }
     } catch (e) {
-      String errorMessage = "Lỗi không xác định";
-      log(e.toString());
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(errorMessage),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 5),
-        ),
-      );
+      ShowToast("Có lỗi xảy ra", false);
       return null;
     }
   }

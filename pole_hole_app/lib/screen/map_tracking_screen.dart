@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
@@ -15,6 +16,7 @@ import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:pole_hole_app/widget/show_toast.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../model/report_model.dart';
@@ -32,6 +34,8 @@ class MapTrackingScreen extends StatefulWidget {
 }
 
 class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProviderStateMixin {
+  final User? _user = FirebaseAuth.instance.currentUser;
+
   final MapController _mapController = MapController();
 
   // Vị trí mặc định (Hà Nội)
@@ -61,15 +65,14 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
   bool _isLoadingSuggestions = false;
   List<Polyline> _roadPolylines = [];
 
-  // Các biến cho Logic Tốc độ & Chụp ảnh
-  LatLng? _lastPositionForSpeed;
-  DateTime? _lastSpeedCalcTime;
   DateTime? _lastCaptureTime;
   bool _isPausedBySpeed = false;
   bool _isTooFast = false;
   final User? currentUser = FirebaseAuth.instance.currentUser;
   StreamSubscription? _onlineUsersSub;
   List<Marker> _onlineUserMarkers = [];
+  final String _currentDeviceId = const Uuid().v4();
+  String? _serverDeviceId;
 
   final List<Map<String, dynamic>> _vehicleOptions = [
     {
@@ -127,6 +130,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
       upperBound: 1.05,
     )..repeat(reverse: true);
 
+    _loadDataFromFirestore();
     _checkPermissionAndStartTracking();
     _subscribeToOnlineUsers();
     _subscribeToPotholes();
@@ -154,6 +158,25 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
     super.dispose();
   }
 
+  Future<void> _loadDataFromFirestore() async {
+    if (_user == null) return;
+
+    try {
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(_user!.uid).get();
+      if (userDoc.exists && mounted) {
+        setState(() {
+          String deviceName = userDoc.get('device_active') ?? "";
+          log(deviceName.toString());
+          if (deviceName.isNotEmpty) {
+            _serverDeviceId = deviceName;
+          }
+        });
+      }
+    } catch (e) {
+      log("Lỗi lấy dữ liệu từ DB");
+    }
+  }
+
   Future<void> _updateOnlineStatus(bool isOnline) async {
     if (currentUser == null) return;
     try {
@@ -168,19 +191,25 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
   }
 
   Future<void> _checkPermissionAndStartTracking() async {
+    bool hasInternet = await _hasInternetConnection();
+    if (!hasInternet) {
+      if (mounted) {
+        ShowToast('Không có kết nối Internet. Vui lòng kiểm tra lại Wifi/4G!', false);
+      }
+      return;
+    }
     bool serviceEnabled;
     LocationPermission permission;
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Vui lòng bật GPS')));
+      if (mounted) ShowToast('Vui lòng bật GPS', false);
       return;
     }
     permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Quyền vị trí bị từ chối')));
+        if (mounted) ShowToast('Quyền vị trí bị từ chối', false);
         return;
       }
     }
@@ -197,14 +226,19 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
   void _startLiveLocationTracking() {
     const LocationSettings locationSettings = LocationSettings(
       accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 5,
+      distanceFilter: 1,
     );
 
     _positionStreamSubscription =
         Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) {
       LatLng newPos = LatLng(position.latitude, position.longitude);
+      double hardwareSpeed = position.speed * 3.6;
+      if (hardwareSpeed < 1.0) hardwareSpeed = 0.0;
       setState(() {
         _currentPosition = newPos;
+        if (_isTracking) {
+          _currentSpeed = hardwareSpeed;
+        }
       });
       if (_isTracking && currentUser != null) {
         FirebaseFirestore.instance.collection('users').doc(currentUser!.uid).update({
@@ -217,6 +251,18 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
         _hasFocusedOnce = true;
       }
     });
+  }
+
+  Future<bool> _hasInternetConnection() async {
+    try {
+      final result = await InternetAddress.lookup('google.com');
+      if (result.isNotEmpty && result[0].rawAddress.isNotEmpty) {
+        return true;
+      }
+    } on SocketException catch (_) {
+      return false;
+    }
+    return false;
   }
 
   Future<void> _initCamera() async {
@@ -240,21 +286,44 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
   }
 
   void _startAutoScan() async {
+    try {
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(currentUser!.uid).get();
+      if (userDoc.exists) {
+        bool isOnline = userDoc.get('online') ?? false;
+        _serverDeviceId = userDoc.get('device_active') ?? "";
+        log(isOnline.toString());
+        if (isOnline && (_serverDeviceId ?? '').isNotEmpty && _serverDeviceId != _currentDeviceId) {
+          if (mounted) {
+            ShowToast("Tài khoản này đang được quét trên một thiết bị khác!", false);
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      ShowToast("Có lỗi xảy ra", false);
+    }
     if (!_isCameraInitialized) {
       await _initCamera();
       if (!_isCameraInitialized) {
         if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(const SnackBar(content: Text("Không thể mở Camera. Hãy kiểm tra quyền truy cập!")));
+          ShowToast("Không thể mở Camera. Hãy kiểm tra quyền truy cập!", false);
         }
         return;
       }
     }
+    bool hasInternet = await _hasInternetConnection();
+    if (!hasInternet) {
+      if (mounted) {
+        ShowToast('Không có kết nối Internet. Vui lòng kiểm tra lại Wifi/4G!', false);
+      }
+      return;
+    }
     setState(() {
       _isTracking = true;
+    });
+    _subscribeToOnlineUsers();
+    setState(() {
       _currentSpeed = 0;
-      _lastPositionForSpeed = _currentPosition;
-      _lastSpeedCalcTime = DateTime.now();
       _lastCaptureTime = DateTime.now();
       _isPausedBySpeed = false;
       _isTooFast = false;
@@ -267,41 +336,21 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
     });
   }
 
-  void _stopAutoScan() {
+  void _stopAutoScan() async {
     _scanTimer?.cancel();
     WakelockPlus.disable();
     setState(() {
       _isTracking = false;
       _currentSpeed = 0.0;
     });
+    await FirebaseFirestore.instance.collection('users').doc(currentUser!.uid).update({'online': false});
+    await FirebaseFirestore.instance.collection('users').doc(currentUser!.uid).update({'device_active': ''});
     widget.onTrackingChanged(false);
   }
 
   void _calculateSpeedAndDecide() {
     if (!_isTracking) return;
-    final now = DateTime.now();
-    if (_lastPositionForSpeed == null || _lastSpeedCalcTime == null) {
-      _lastPositionForSpeed = _currentPosition;
-      _lastSpeedCalcTime = now;
-      return;
-    }
-    double distanceInMeters = Geolocator.distanceBetween(
-      _lastPositionForSpeed!.latitude,
-      _lastPositionForSpeed!.longitude,
-      _currentPosition.latitude,
-      _currentPosition.longitude,
-    );
-    double timeDiffSeconds = now.difference(_lastSpeedCalcTime!).inMilliseconds / 1000.0;
-    if (timeDiffSeconds > 0) {
-      double speedKmh = (distanceInMeters / timeDiffSeconds) * 3.6;
-      if (speedKmh < 1.0 || distanceInMeters < 2.0) speedKmh = 0.0;
-      setState(() {
-        _currentSpeed = speedKmh;
-        _lastPositionForSpeed = _currentPosition;
-        _lastSpeedCalcTime = now;
-      });
-    }
-    _checkCaptureCondition(now);
+    _checkCaptureCondition(DateTime.now());
   }
 
   void _checkCaptureCondition(DateTime now) {
@@ -393,9 +442,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
 
   void _showCameraMonitor() {
     if (!_isCameraInitialized || _cameraController == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Camera chưa sẵn sàng!")),
-      );
+      ShowToast("Camera chưa sẵn sàng!", false);
       return;
     }
 
@@ -596,7 +643,19 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
     });
   }
 
-  void _subscribeToOnlineUsers() {
+  void _subscribeToOnlineUsers() async {
+    if (_isTracking) {
+      log(_currentDeviceId.toString());
+      try {
+        await FirebaseFirestore.instance.collection('users').doc(currentUser!.uid).update({'online': true});
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser!.uid)
+            .update({'device_active': _currentDeviceId});
+      } catch (e) {
+        log(e.toString());
+      }
+    }
     _onlineUsersSub =
         FirebaseFirestore.instance.collection('users').where('online', isEqualTo: true).snapshots().listen((snapshot) {
       final List<Marker> markers = [];
@@ -664,7 +723,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.6,
+        height: MediaQuery.of(context).size.height * 0.45,
         padding: const EdgeInsets.all(20),
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -677,7 +736,7 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text("Chi tiết điểm đen", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Text("Chi tiết đánh giá", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 // NÚT CẬP NHẬT Ở ĐÂY
                 IconButton(
                   icon: const Icon(Icons.edit_note, color: Color(0xFF6C63FF), size: 30),
@@ -953,15 +1012,13 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
               ),
               MarkerLayer(
                 markers: [
-                  // --- MARKER VỊ TRÍ CỦA BẠN (CẬP NHẬT MỚI) ---
                   Marker(
                     point: _currentPosition,
-                    width: 60, // Tăng kích thước chút cho rõ avatar
+                    width: 60,
                     height: 60,
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
-                        // Vòng tròn tỏa ra mờ mờ (Hiệu ứng radar)
                         Container(
                           width: 60,
                           height: 60,
@@ -970,9 +1027,8 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                             shape: BoxShape.circle,
                           ),
                         ),
-                        // Viền trắng bảo vệ avatar
                         Container(
-                          width: 44, // Kích thước avatar + viền
+                          width: 44,
                           height: 44,
                           decoration: BoxDecoration(
                               color: Colors.white,
@@ -993,14 +1049,10 @@ class _MapTrackingScreenState extends State<MapTrackingScreen> with TickerProvid
                             child: currentUser?.photoURL == null ? const Icon(Icons.person, color: Colors.grey) : null,
                           ),
                         ),
-                        // Mũi tên nhỏ chỉ hướng (Nếu muốn xịn hơn thì thêm, ko thì thôi)
                       ],
                     ),
                   ),
-
                   ..._onlineUserMarkers,
-
-                  // --- CÁC MARKER Ổ GÀ (GIỮ NGUYÊN) ---
                   ..._potholeMarkers,
                 ],
               ),

@@ -1,4 +1,3 @@
-import 'dart:developer';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -8,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pole_hole_app/widget/show_toast.dart';
 
 import '../model/report_model.dart';
 import '../service/api_service.dart';
@@ -84,10 +84,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     );
 
     if (img != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Đang phân tích AI..."), duration: Duration(seconds: 1)),
-      );
-
+      ShowToast("Đang phân tích AI...", true);
       try {
         dynamic response = await _potholeService.processImage(img, context);
         if (response != null) {
@@ -108,19 +105,14 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
           });
         }
       } catch (e) {
-        log("Lỗi AI: $e");
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Lỗi xử lý ảnh: $e"), backgroundColor: Colors.red),
-        );
+        ShowToast('Lỗi xử lý ảnh', false);
       }
     }
   }
 
   Future<void> _saveUpdate() async {
     if (_newImageBytes == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Vui lòng chụp ảnh mới để cập nhật!"), backgroundColor: Colors.orange),
-      );
+      ShowToast("Vui lòng chụp ảnh mới để cập nhật!", false);
       return;
     }
 
@@ -159,16 +151,11 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ Cập nhật thành công!"), backgroundColor: Colors.green),
-        );
+        ShowToast("Cập nhật thành công!", true);
         Navigator.pop(context);
       }
     } catch (e) {
-      log("Lỗi Update: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Lỗi: $e"), backgroundColor: Colors.red),
-      );
+      ShowToast('Có lỗi xảy ra', false);
     } finally {
       setState(() => _isLoading = false);
     }

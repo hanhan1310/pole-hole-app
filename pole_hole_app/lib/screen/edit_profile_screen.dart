@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../service/api_service.dart';
+import '../widget/show_toast.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -31,8 +32,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: _user?.displayName ?? "");
+    log(FirebaseAuth.instance.currentUser.toString());
+    log(_user.toString());
+    _nameController = TextEditingController(text: _user?.displayName ?? '');
+
     _emailController.text = _user?.email ?? "";
+    _loadDataFromFirestore();
   }
 
   @override
@@ -43,6 +48,26 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _newPassController.dispose();
     _confirmPassController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadDataFromFirestore() async {
+    if (_user == null) return;
+
+    try {
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(_user!.uid).get();
+      log(userDoc.toString());
+      if (userDoc.exists && mounted) {
+        setState(() {
+          String dbName = userDoc.get('display_name') ?? "";
+          log(dbName.toString());
+          if (dbName.isNotEmpty) {
+            _nameController = TextEditingController(text: dbName);
+          }
+        });
+      }
+    } catch (e) {
+      log("Lỗi lấy dữ liệu từ DB: $e");
+    }
   }
 
   Future<void> _pickImage() async {
@@ -101,20 +126,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       await _user!.reload();
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Lưu thay đổi thành công!"), backgroundColor: Colors.green),
-        );
+        ShowToast("Cập nhật thành công", true);
         Navigator.pop(context, true);
       }
     } on FirebaseAuthException catch (e) {
       String msg = e.message ?? "Lỗi cập nhật";
       if (e.code == 'wrong-password') msg = "Mật khẩu cũ không đúng.";
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+        ShowToast(msg, false);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Lỗi: $e"), backgroundColor: Colors.red));
+        ShowToast('Có lỗi xảy ra', false);
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);

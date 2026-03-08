@@ -49,36 +49,23 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 
-  // --- LOGIC XỬ LÝ ---
-
-  void _showMsg(String msg, {bool isError = true}) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: isError ? Colors.red : Colors.green,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
   Future<void> _submit() async {
     // 1. Ẩn bàn phím để trải nghiệm tốt hơn
     FocusScope.of(context).unfocus();
 
     // 2. Validate cơ bản
     if (_emailController.text.isEmpty || _passController.text.isEmpty) {
-      _showMsg("Vui lòng nhập Email và Mật khẩu");
+      ShowToast("Vui lòng nhập Email và Mật khẩu", false);
       return;
     }
 
     if (!_isLoginTab) {
       if (_passController.text != _confirmPassController.text) {
-        _showMsg("Mật khẩu xác nhận không khớp");
+        ShowToast("Mật khẩu xác nhận không khớp", false);
         return;
       }
       if (_codeController.text.isEmpty) {
-        _showMsg("Vui lòng nhập Mã Dự Án");
+        ShowToast("Vui lòng nhập mã dự án", false);
         return;
       }
     }
@@ -97,7 +84,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
           password: _passController.text.trim(),
           inviteCode: _codeController.text.trim(),
         );
-        _showMsg("Đăng ký thành công!", isError: false);
+        ShowToast('Đăng ký vào dự án thành công', true);
       }
 
       if (mounted) {
@@ -115,7 +102,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
       ShowToast(msg, false);
     } catch (e) {
-      _showMsg("Lỗi hệ thống: $e");
+      ShowToast("Có lỗi xảy ra", false);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

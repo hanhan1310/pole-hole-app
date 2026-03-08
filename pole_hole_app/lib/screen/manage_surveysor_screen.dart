@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:pole_hole_app/widget/show_toast.dart';
 
 import 'edit_user_screen.dart';
 
@@ -15,17 +16,14 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   Future<void> _handleAdminAction(String action, String targetUid, Map<String, dynamic> currentData) async {
     try {
       if (action == 'delete') {
-        // Soft delete: Update status = deleted
         await FirebaseFirestore.instance.collection('users').doc(targetUid).update({'status': 'deleted'});
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Đã xóa tài khoản")));
+        if (mounted) ShowToast("Đã xóa tài khoản", true);
       } else if (action == 'lock') {
         String currentStatus = currentData['status'] ?? 'active';
         String newStatus = currentStatus == 'locked' ? 'active' : 'locked';
         await FirebaseFirestore.instance.collection('users').doc(targetUid).update({'status': newStatus});
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(newStatus == 'locked' ? "Đã khóa tài khoản" : "Đã mở khóa tài khoản")),
-          );
+          ShowToast(newStatus == 'locked' ? "Đã khóa tài khoản" : "Đã mở khóa tài khoản", true);
         }
       } else if (action == 'edit') {
         Navigator.push(
@@ -36,7 +34,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
         );
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Lỗi: $e")));
+      if (mounted) ShowToast("Có lỗi xảy ra", false);
     }
   }
 

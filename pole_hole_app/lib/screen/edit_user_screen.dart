@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../service/api_service.dart';
+import '../widget/show_toast.dart';
 
 class EditUserScreen extends StatefulWidget {
   final String uid;
@@ -76,14 +77,12 @@ class _EditUserScreenState extends State<EditUserScreen> {
       await FirebaseFirestore.instance.collection('users').doc(widget.uid).update(updateData);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ Cập nhật thông tin thành công!"), backgroundColor: Colors.green),
-        );
+        ShowToast("Cập nhật thành công", true);
         Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Lỗi: $e"), backgroundColor: Colors.red));
+        ShowToast("Lỗi cập nhật. Vui lòng thử lại.", false);
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -104,7 +103,8 @@ class _EditUserScreenState extends State<EditUserScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text("Sửa nhân viên", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+        title:
+            const Text("Sửa thông tin nhân viên", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
@@ -154,10 +154,9 @@ class _EditUserScreenState extends State<EditUserScreen> {
                   const SizedBox(height: 30),
                   _buildTextField("Email (Chỉ xem)", _emailController, readOnly: true, icon: Icons.email_outlined),
                   _buildTextField(
-                    "Tên hiển thị (Chỉ xem)",
+                    "Tên hiển thị",
                     _nameController,
                     icon: Icons.person_outline,
-                    readOnly: true,
                   ),
                   const SizedBox(height: 20),
                   const Divider(),
@@ -205,25 +204,25 @@ class _EditUserScreenState extends State<EditUserScreen> {
                     ),
                   ),
                   const SizedBox(height: 15),
-                  // Container(
-                  //   padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
-                  //   decoration: BoxDecoration(
-                  //     border: Border.all(color: Colors.grey.shade300),
-                  //     borderRadius: BorderRadius.circular(15),
-                  //   ),
-                  //   child: Row(
-                  //     children: [
-                  //       const Icon(Icons.verified_user, color: Colors.blue),
-                  //       const SizedBox(width: 15),
-                  //       const Expanded(child: Text("Đã phê duyệt vào dự án:", style: TextStyle(fontSize: 16))),
-                  //       Switch(
-                  //         value: _isApproved,
-                  //         activeColor: const Color(0xFF6C63FF),
-                  //         onChanged: (val) => setState(() => _isApproved = val),
-                  //       ),
-                  //     ],
-                  //   ),
-                  // ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.verified_user, color: Colors.blue),
+                        const SizedBox(width: 15),
+                        const Expanded(child: Text("Đã phê duyệt vào dự án", style: TextStyle(fontSize: 16))),
+                        Switch(
+                          value: _isApproved,
+                          activeColor: const Color(0xFF6C63FF),
+                          onChanged: (val) => setState(() => _isApproved = val),
+                        ),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 40),
                   SizedBox(
                     width: double.infinity,

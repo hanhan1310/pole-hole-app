@@ -13,6 +13,7 @@ import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../service/api_service.dart';
+import '../widget/show_toast.dart';
 
 class UpdateRoadDataScreen extends StatefulWidget {
   const UpdateRoadDataScreen({super.key});
@@ -374,25 +375,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                                   });
                                 }
                               } catch (e) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Row(
-                                      children: [
-                                        const Icon(Icons.error, color: Colors.white),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                          child: Text(
-                                            e.toString(),
-                                            style: const TextStyle(fontSize: 16),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    backgroundColor: Colors.red,
-                                    duration: const Duration(seconds: 3),
-                                    behavior: SnackBarBehavior.floating,
-                                  ),
-                                );
+                                ShowToast('Có lỗi xảy ra', false);
                               }
                             }
                           }),
@@ -414,25 +397,7 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                                   _selectedStatus = response['status'];
                                 });
                               } catch (e) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Row(
-                                      children: [
-                                        const Icon(Icons.error, color: Colors.white),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                          child: Text(
-                                            e.toString(),
-                                            style: const TextStyle(fontSize: 16),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    backgroundColor: Colors.red,
-                                    duration: const Duration(seconds: 3),
-                                    behavior: SnackBarBehavior.floating,
-                                  ),
-                                );
+                                ShowToast('Có lỗi xảy ra', false);
                               }
                             }
                           }),
@@ -583,19 +548,16 @@ class _UpdateRoadDataScreenState extends State<UpdateRoadDataScreen> {
                   // 1. CHECK USER TRƯỚC KHI LƯU
                   final user = FirebaseAuth.instance.currentUser;
                   if (user == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Lỗi: Bạn chưa đăng nhập!"), backgroundColor: Colors.red));
+                    ShowToast("Vui lòng đăng nhập để sử dụng ứng dụng!", false);
                     return;
                   }
 
                   if (data['imageBytes'] == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Vui lòng tải ảnh lên!"), backgroundColor: Colors.red));
+                    ShowToast("Vui lòng tải ảnh lên!", false);
                     return;
                   }
                   if (_startPosCoords == null || _endPosCoords == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text("Vui lòng chọn vị trí trên bản đồ!"), backgroundColor: Colors.red));
+                    ShowToast("Vui lòng chọn vị trí bắt đầu và kết thúc!", false);
                     return;
                   }
 

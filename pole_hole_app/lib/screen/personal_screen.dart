@@ -23,12 +23,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   Map<String, PermissionStatus> _permissions = {};
   bool _isLoading = false;
   bool _isAdmin = false;
+  String? userName;
 
   @override
   void initState() {
     super.initState();
     _checkPermissions();
     _checkRole();
+    _loadDataFromFirestore();
   }
 
   Future<void> _checkRole() async {
@@ -270,13 +272,30 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  Widget _buildProfileHeader() {
-    User? user = FirebaseAuth.instance.currentUser;
-    user?.reload();
+  Future<void> _loadDataFromFirestore() async {
+    if (_user == null) return;
 
+    try {
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(_user!.uid).get();
+      if (userDoc.exists && mounted) {
+        setState(() {
+          String dbName = userDoc.get('display_name') ?? "";
+          log(dbName.toString());
+          if (dbName.isNotEmpty) {
+            userName = dbName;
+          }
+        });
+      }
+    } catch (e) {
+      log("Lỗi lấy dữ liệu từ DB: $e");
+    }
+  }
+
+  Widget _buildProfileHeader() {
+    _user?.reload();
     ImageProvider avatarImage;
-    if (user?.photoURL != null && user!.photoURL!.isNotEmpty) {
-      avatarImage = NetworkImage(user.photoURL!);
+    if (_user?.photoURL != null && _user!.photoURL!.isNotEmpty) {
+      avatarImage = NetworkImage(_user.photoURL!);
     } else {
       avatarImage = const AssetImage('images/place_holder_image.png');
     }
@@ -326,7 +345,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        user?.displayName ?? "Người dùng",
+                        userName ?? "Người dùng",
                         style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -337,7 +356,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  user?.email ?? "Chưa cập nhật email",
+                  _user?.email ?? "Chưa cập nhật email",
                   style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.9)),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

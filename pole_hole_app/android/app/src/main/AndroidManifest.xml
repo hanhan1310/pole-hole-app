@@ -1,23 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Quyền truy cập vị trí GPS -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     
-    <!-- Quyền camera để chụp ảnh -->
     <uses-permission android:name="android.permission.CAMERA" />
-    
-    <!-- Quyền truy cập bộ nhớ để đọc/ghi ảnh -->
-    <!-- Android 12 trở xuống -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" 
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
                      android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" 
                      android:maxSdkVersion="32" />
     
-    <!-- Android 13+ (API 33+) - Granular media permissions -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     
-    <!-- Quyền internet để gọi API -->
     <uses-permission android:name="android.permission.INTERNET" />
     
     <application
